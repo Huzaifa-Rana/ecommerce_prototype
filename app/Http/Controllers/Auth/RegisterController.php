@@ -31,8 +31,15 @@ class RegisterController extends Controller
      */
     protected function redirectTo()
     {
-        if (auth()->user()->role === 'admin') {
+        if (auth()->user()->hasRole('admin')) {
             return '/admin/dashboard';
+        }
+
+        // If there was a checkout attempt, redirect back to checkout
+        if (session()->has('cart') && session()->has('last_cart_action')) {
+            $lastAction = session()->get('last_cart_action');
+            session()->forget('last_cart_action');
+            return $lastAction;
         }
 
         return '/';

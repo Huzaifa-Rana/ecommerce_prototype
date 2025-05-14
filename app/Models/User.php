@@ -35,20 +35,53 @@ class User extends Authenticatable
     ];
 
     /**
-     * Get the attributes that should be cast.
+     * The attributes that should be cast.
      *
-     * @return array<string, string>
+     * @var array<string, string>
      */
-    protected function casts(): array
+    protected $casts = [
+        'email_verified_at' => 'datetime',
+        'password' => 'hashed',
+    ];
+
+    protected static function boot()
     {
-        return [
-            'email_verified_at' => 'datetime',
-            'password' => 'hashed',
-        ];
+        parent::boot();
+
+        // When a user is deleted, cascade delete their orders
+        static::deleting(function ($user) {
+            $user->orders()->each(function ($order) {
+                $order->orderItems()->delete(); // Delete order items first
+            });
+            $user->orders()->delete(); // Then delete the orders
+        });
     }
 
+    /**
+     * Get all orders for this user
+     */
     public function orders()
     {
         return $this->hasMany(Order::class);
+    }
+
+    /**
+     * Get total spent by this user
+     */
+    public function getTotalSpentAttribute(): float
+    {
+        return $this->orders()
+            ->where('status', 'completed')
+            ->sum('total_amount');
+    }
+
+    /**
+     * Get total number of orders by this user
+     */
+    public function getTotalOrdersAttribute(): int
+    {
+        return $this->orders()
+            ->where('status', 'completed')
+            ->count();
     }
 }

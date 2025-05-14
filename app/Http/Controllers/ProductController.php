@@ -7,6 +7,24 @@ use Illuminate\Http\Request;
 
 class ProductController extends Controller
 {
+    public function __construct()
+    {
+        $this->middleware(['auth', 'role:admin'])->except(['publicIndex', 'show']);
+    }
+
+    // Public methods
+    public function publicIndex()
+    {
+        $products = Product::where('stock', '>', 0)->latest()->paginate(12);
+        return view('products.index', compact('products'));
+    }
+
+    public function show(Product $product)
+    {
+        return view('products.show', compact('product'));
+    }
+
+    // Admin methods
     public function index()
     {
         $products = Product::latest()->paginate(10);

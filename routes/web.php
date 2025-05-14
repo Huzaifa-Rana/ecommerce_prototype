@@ -7,32 +7,31 @@ use App\Http\Controllers\AdminController;
 use App\Http\Controllers\CartController;
 use App\Http\Controllers\CheckoutController;
 
+// Public routes
+Route::get('/', [ProductController::class, 'publicIndex'])->name('home');
+Route::get('/products', [ProductController::class, 'publicIndex'])->name('products.index');
+Route::get('/products/{product}', [ProductController::class, 'show'])->name('products.show');
 
-// Route::get('/', function () {
-//     return view('welcome');
-// });
-
-Route::middleware(['auth', RoleMiddleware::class . ':admin'])
-    ->prefix('admin')
-    ->as('admin.') // <- This adds name prefix
-    ->group(function () {
-        Route::get('/dashboard', [AdminController::class, 'dashboard'])->name('dashboard');
-        Route::resource('/products', ProductController::class);
-    });
-
-
-// Customer routes (authentication & role check required)
-Route::middleware(['auth', RoleMiddleware::class . ':customer'])->group(function () {
-    Route::get('/cart', [CartController::class, 'index'])->name('cart.index'); // View cart
-    Route::post('/cart/{product}', [CartController::class, 'add'])->name('cart.add'); // Add product to cart
-    Route::delete('/cart/{product}', [CartController::class, 'remove'])->name('cart.remove'); // Remove product from cart
-    Route::get('/checkout', [CheckoutController::class, 'index'])->name('checkout.index'); // Checkout page
-    Route::post('/checkout', [CheckoutController::class, 'process'])->name('checkout.process'); // Process payment
+// Cart routes (available for everyone)
+Route::prefix('cart')->group(function () {
+    Route::get('/', [CartController::class, 'index'])->name('cart.index');
+    Route::post('/{product}', [CartController::class, 'add'])->name('cart.add');
+    Route::delete('/{product}', [CartController::class, 'remove'])->name('cart.remove');
 });
 
-// Public routes (no authentication needed for browsing products)
-Route::get('/', [ProductController::class, 'index'])->name('products.index'); // Show products
+// Admin routes
+Route::middleware(['auth', 'role:admin'])
+    ->prefix('admin')
+    ->as('admin.')
+    ->group(function () {
+        Route::get('/dashboard', [AdminController::class, 'dashboard'])->name('dashboard');
+        Route::resource('/products', ProductController::class)->except(['show']);
+    });
+
+// Customer routes that require authentication
+Route::middleware(['auth', 'role:customer'])->group(function () {
+    Route::get('/checkout', [CheckoutController::class, 'index'])->name('checkout.index');
+    Route::post('/checkout', [CheckoutController::class, 'process'])->name('checkout.process');
+});
 
 Auth::routes();
-
-// Route::get('/home', [App\Http\Controllers\HomeController::class, 'index'])->name('home');

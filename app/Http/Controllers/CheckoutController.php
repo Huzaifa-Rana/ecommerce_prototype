@@ -2,80 +2,110 @@
 
 namespace App\Http\Controllers;
 
-use Illuminate\Http\Request;
-use Stripe\Stripe;
-use Stripe\Checkout\Session;
 use App\Models\Order;
+use App\Models\OrderItem;
+use App\Models\Product;
+use Illuminate\Http\Request;
+use Illuminate\Support\Facades\DB;
+use Stripe\Stripe;
+use Stripe\PaymentIntent;
 
 class CheckoutController extends Controller
 {
+    public function __construct()
+    {
+        $this->middleware(['auth', 'role:customer']);
+    }
+
     public function index()
     {
         $cart = session()->get('cart', []);
-        $total = array_sum(array_map(fn($item) => $item['price'] * $item['quantity'], $cart));
 
-        return view('checkout.index', compact('cart', 'total'));
+        if (empty($cart)) {
+            return redirect()->route('products.index')
+                ->with('error', 'Your cart is empty');
+        }
+
+        // Calculate total
+        $total = 0;
+        foreach ($cart as $item) {
+            $total += $item['price'] * $item['quantity'];
+        }
+
+        // Create Stripe Payment Intent
+        Stripe::setApiKey(config('services.stripe.secret'));
+
+        $paymentIntent = PaymentIntent::create([
+            'amount' => $total * 100, // Amount in cents
+            'currency' => 'usd',
+            'metadata' => [
+                'user_id' => auth()->id()
+            ]
+        ]);
+
+        return view('checkout.index', [
+            'cart' => $cart,
+            'total' => $total,
+            'clientSecret' => $paymentIntent->client_secret,
+        ]);
     }
 
     public function process(Request $request)
     {
         $cart = session()->get('cart', []);
-        $total = array_sum(array_map(fn($item) => $item['price'] * $item['quantity'], $cart));
 
-        // Create the Stripe session
-        Stripe::setApiKey(env('STRIPE_SECRET'));
-        $session = Session::create([
-            'payment_method_types' => ['card'],
-            'line_items' => array_map(fn($item) => [
-                'price_data' => [
-                    'currency' => 'usd',
-                    'product_data' => [
-                        'name' => $item['name'],
-                    ],
-                    'unit_amount' => $item['price'] * 100,
-                ],
-                'quantity' => $item['quantity'],
-            ], $cart),
-            'mode' => 'payment',
-            'success_url' => route('checkout.success'),
-            'cancel_url' => route('checkout.cancel'),
-        ]);
-
-        // Save the order in the database
-        $order = Order::create([
-            'user_id' => auth()->id(),
-            'total_amount' => $total,
-            'status' => 'pending',
-        ]);
-
-        // Save each item in the order_items table
-        foreach ($cart as $item) {
-            $order->items()->create([
-                'product_id' => $item['id'],
-                'quantity' => $item['quantity'],
-                'price' => $item['price'],
-            ]);
+        if (empty($cart)) {
+            return redirect()->route('products.index')
+                ->with('error', 'Your cart is empty');
         }
 
-        // Clear the cart session after order is placed
-        session()->forget('cart');
+        try {
+            DB::beginTransaction();
 
-        return redirect()->away($session->url);
-    }
+            // Create order
+            $total = 0;
+            foreach ($cart as $productId => $item) {
+                $total += $item['price'] * $item['quantity'];
+            }
 
+            $order = Order::create([
+                'user_id' => auth()->id(),
+                'total_amount' => $total,
+                'status' => 'completed',
+            ]);
 
-    public function success()
-    {
-        // You can update the order status to 'completed' after successful payment
-        $order = Order::where('user_id', auth()->id())->latest()->first();
-        $order->update(['status' => 'completed']);
+            // Create order items and update product stock
+            foreach ($cart as $productId => $item) {
+                $product = Product::findOrFail($productId);
 
-        return view('checkout.success');
-    }
+                if ($product->stock < $item['quantity']) {
+                    throw new \Exception("Not enough stock for {$product->name}");
+                }
 
-    public function cancel()
-    {
-        // Handle canceled payment
-        return view('checkout.cancel');
+                // Create order item
+                OrderItem::create([
+                    'order_id' => $order->id,
+                    'product_id' => $productId,
+                    'quantity' => $item['quantity'],
+                    'price' => $item['price'],
+                ]);
+
+                // Update stock
+                $product->update([
+                    'stock' => $product->stock - $item['quantity']
+                ]);
+            }
+
+            // Clear cart
+            session()->forget('cart');
+
+            DB::commit();
+
+            return redirect()->route('products.index')
+                ->with('success', 'Order placed successfully!');
+        } catch (\Exception $e) {
+            DB::rollBack();
+            return back()->with('error', 'Error processing your order: ' . $e->getMessage());
+        }
     }
 }
